@@ -13,7 +13,7 @@ struct EQView: View {
                 .frame(height: 210)
                 .opacity(model.enabled ? 1 : 0.5)
 
-            BandPicker(bands: model.eq.bands, selected: $selected)
+            BandPicker(eq: $model.eq, selected: $selected)
 
             BandEditor(band: $model.eq.bands[selected], eq: $model.eq)
 
@@ -154,7 +154,7 @@ private struct ResponseGraph: View {
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .accessibilityElement()
         .accessibilityLabel("EQ response graph")
-        .accessibilityValue("Band \(selected + 1): \(formatFreq(eq.bands[selected].freq)) hertz, \(String(format: "%+.1f", eq.bands[selected].gainDB)) dB")
+        .accessibilityValue("Band \(selected + 1): \(formatFreq(eq.bands[selected].freq)) hertz, \(formatGain(eq.bands[selected].gainDB)) dB")
     }
 
     // Mapping between pixels and frequency (log, 20 Hz – 20 kHz) / gain.
@@ -237,17 +237,17 @@ private struct ResponseGraph: View {
 // MARK: - Band picker
 
 private struct BandPicker: View {
-    let bands: [Band]
+    @Binding var eq: EQSettings
     @Binding var selected: Int
 
     var body: some View {
         HStack(spacing: 4) {
-            ForEach(bands) { band in
+            ForEach(eq.bands) { band in
                 let isSel = band.id == selected
                 Button { selected = band.id } label: {
                     VStack(spacing: 1) {
                         Text(formatFreq(band.freq)).font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                        Text(band.enabled ? String(format: "%+.1f", band.gainDB) : "off")
+                        Text(band.enabled ? formatGain(band.gainDB) : "off")
                             .font(.system(size: 9)).monospacedDigit()
                             .foregroundStyle(isSel ? Color.white.opacity(0.85) : Color.secondary)
                     }
@@ -257,7 +257,10 @@ private struct BandPicker: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .simultaneousGesture(TapGesture(count: 2).onEnded { eq.resetBand(band.id) })
+                .help("Double-click to reset")
                 .accessibilityLabel("Band \(band.id + 1), \(formatFreq(band.freq)) hertz")
+                .accessibilityAction(named: "Reset band") { eq.resetBand(band.id) }
             }
         }
     }
@@ -275,7 +278,7 @@ private struct BandEditor: View {
                 Text("Band \(band.id + 1)").font(.subheadline.weight(.semibold))
                 Spacer()
                 Button("Reset Band") {
-                    band = Band(id: band.id, freq: EQSettings.defaultFreqs[band.id])
+                    eq.resetBand(band.id)
                 }
                 .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                     .padding(.trailing, 6)
@@ -352,6 +355,9 @@ private struct Control: View {
         return Binding(get: { log10(value) }, set: { value = (pow(10, $0) * scale).rounded() / scale })
     }
 }
+
+/// "+1.5"; never "-0.0" for values that round to zero.
+private func formatGain(_ db: Double) -> String { String(format: "%+.1f", (db * 10).rounded() / 10 + 0) }
 
 private func formatFreq(_ f: Double) -> String {
     guard f >= 1000 else { return "\(Int(f.rounded()))" }

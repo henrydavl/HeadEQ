@@ -51,6 +51,11 @@ public struct EQSettings: Codable, Equatable, Sendable {
         self.bands = bands ?? Self.defaultFreqs.enumerated().map { Band(id: $0.offset, freq: $0.element) }
     }
 
+    /// Puts band `index` back to its default frequency, 0 dB, Q 1, on.
+    public mutating func resetBand(_ index: Int) {
+        bands[index] = Band(id: index, freq: Self.defaultFreqs[index])
+    }
+
     /// Combined response of all bands plus preamp, in dB.
     public func magnitudeDB(at freq: Double, sampleRate: Double = 48_000) -> Double {
         bands.reduce(preampDB) { $0 + $1.biquad(sampleRate: sampleRate).magnitudeDB(at: freq, sampleRate: sampleRate) }

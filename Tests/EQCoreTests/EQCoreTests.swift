@@ -26,6 +26,15 @@ struct BiquadTests {
         #expect(drag(-1000, 1000).freq == Band.freqRange.lowerBound)
     }
 
+    @Test func resetBandRestoresOnlyThatBand() {
+        var s = EQSettings()
+        s.bands[5] = Band(id: 5, freq: 941, gainDB: -4, q: 3, enabled: false)
+        s.bands[2].gainDB = 6
+        s.resetBand(5)
+        #expect(s.bands[5] == EQSettings().bands[5]) // 1 kHz, 0 dB, Q 1, on
+        #expect(s.bands[2].gainDB == 6)
+    }
+
     @Test func flatSettingsAreUnity() {
         let s = EQSettings()
         for f in [20.0, 440, 5000, 19000] { #expect(abs(s.magnitudeDB(at: f)) < 1e-9) }
