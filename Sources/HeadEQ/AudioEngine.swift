@@ -29,6 +29,9 @@ final class AudioEngine {
         start()
     }
 
+    /// Gain each band applies right now; nil while stopped.
+    func liveGains() -> [Double]? { processor?.liveGains() }
+
     /// Changes the EQ live; no-op while stopped.
     func update(_ settings: EQSettings) {
         self.settings = settings

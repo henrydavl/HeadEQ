@@ -23,6 +23,14 @@ public struct Biquad: Equatable, Sendable {
         )
     }
 
+    /// RBJ band-pass, 0 dB at the centre: keeps only what is around `freq` (for level detection).
+    public static func bandPass(freq: Double, q: Double, sampleRate: Double) -> Biquad {
+        let w0 = 2 * Double.pi * min(freq, sampleRate * 0.49) / sampleRate
+        let alpha = sin(w0) / (2 * max(q, 0.01))
+        let a0 = 1 + alpha
+        return Biquad(b0: alpha / a0, b1: 0, b2: -alpha / a0, a1: -2 * cos(w0) / a0, a2: (1 - alpha) / a0)
+    }
+
     public var coefficients: [Double] { [b0, b1, b2, a1, a2] }
 
     /// |H(e^jw)| in dB.

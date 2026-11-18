@@ -1,6 +1,7 @@
 # HeadEQ
 
 Menu bar app: system-wide 10-band parametric EQ (frequency, gain, Q per band) with per-output-device profiles.
+Any band can be dynamic: its gain only applies while that band is louder than a threshold.
 
 ```bash
 ./build.sh   # test, build, sign, install to ~/Applications, launch

@@ -9,7 +9,7 @@ struct EQView: View {
         VStack(spacing: 14) {
             Header(model: model)
 
-            ResponseGraph(eq: $model.eq, selected: $selected, analyzer: model.analyzer)
+            ResponseGraph(eq: $model.eq, selected: $selected, analyzer: model.analyzer, liveGains: { model.liveGains() })
                 .frame(height: 210)
                 .opacity(model.enabled ? 1 : 0.5)
 
@@ -114,6 +114,7 @@ private struct ResponseGraph: View {
     @Binding var eq: EQSettings
     @Binding var selected: Int
     let analyzer: SpectrumAnalyzer
+    let liveGains: () -> [Double]?
     /// The dragged band as it was when the drag began.
     @State private var dragging: Band?
     @State private var dragActive = false
@@ -130,6 +131,14 @@ private struct ResponseGraph: View {
                     Canvas { ctx, size in drawSpectrum(levels, &ctx, size) }
                 }
                 Canvas { ctx, size in draw(&ctx, size) }
+                // What dynamic bands are doing right now, dashed over the set curve.
+                if eq.bands.contains(where: { $0.dynamic && $0.enabled }) {
+                    TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+                        let live = liveGains()
+                        Canvas { ctx, size in drawLiveCurve(live, &ctx, size) }
+                    }
+                    .allowsHitTesting(false)
+                }
             }
                 .contentShape(Rectangle())
                 .gesture(
@@ -176,6 +185,19 @@ private struct ResponseGraph: View {
             let bar = CGRect(x: CGFloat(i) * w + 1, y: s.height - h, width: max(w - 2, 1), height: h)
             ctx.fill(Path(roundedRect: bar, cornerRadius: 1.5), with: .color(.primary.opacity(0.09)))
         }
+    }
+
+    private func drawLiveCurve(_ gains: [Double]?, _ ctx: inout GraphicsContext, _ s: CGSize) {
+        guard let gains, gains.count == eq.bands.count else { return }
+        var now = eq
+        for i in now.bands.indices { now.bands[i].gainDB = gains[i] }
+        var curve = Path()
+        for i in 0...120 {
+            let f = 20 * pow(1000, Double(i) / 120)
+            let p = CGPoint(x: x(f, s), y: y(max(-range, min(range, now.magnitudeDB(at: f) - now.preampDB)), s))
+            i == 0 ? curve.move(to: p) : curve.addLine(to: p)
+        }
+        ctx.stroke(curve, with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [4, 3]))
     }
 
     private func draw(_ ctx: inout GraphicsContext, _ s: CGSize) {
@@ -247,9 +269,12 @@ private struct BandPicker: View {
                 Button { selected = band.id } label: {
                     VStack(spacing: 1) {
                         Text(formatFreq(band.freq)).font(.system(size: 11, weight: .semibold)).monospacedDigit()
-                        Text(band.enabled ? formatGain(band.gainDB) : "off")
-                            .font(.system(size: 9)).monospacedDigit()
-                            .foregroundStyle(isSel ? Color.white.opacity(0.85) : Color.secondary)
+                        HStack(spacing: 2) {
+                            if band.dynamic && band.enabled { Image(systemName: "waveform").font(.system(size: 7, weight: .bold)) }
+                            Text(band.enabled ? formatGain(band.gainDB) : "off")
+                        }
+                        .font(.system(size: 9)).monospacedDigit()
+                        .foregroundStyle(isSel ? Color.white.opacity(0.85) : Color.secondary)
                     }
                     .frame(maxWidth: .infinity, minHeight: 34)
                     .foregroundStyle(isSel ? Color.white : band.enabled ? Color.primary : Color.secondary)
@@ -259,7 +284,7 @@ private struct BandPicker: View {
                 .buttonStyle(.plain)
                 .simultaneousGesture(TapGesture(count: 2).onEnded { eq.resetBand(band.id) })
                 .help("Double-click to reset")
-                .accessibilityLabel("Band \(band.id + 1), \(formatFreq(band.freq)) hertz")
+                .accessibilityLabel("Band \(band.id + 1), \(formatFreq(band.freq)) hertz\(band.dynamic ? ", dynamic" : "")")
                 .accessibilityAction(named: "Reset band") { eq.resetBand(band.id) }
             }
         }
@@ -282,6 +307,11 @@ private struct BandEditor: View {
                 }
                 .buttonStyle(.plain).font(.caption).foregroundStyle(.secondary)
                     .padding(.trailing, 6)
+                Toggle("Dynamic", isOn: $band.dynamic)
+                    .toggleStyle(.switch).controlSize(.mini).font(.caption)
+                    .disabled(!band.enabled)
+                    .help("Apply the gain only when this band gets loud")
+                    .padding(.trailing, 6)
                 Toggle(band.enabled ? "On" : "Off", isOn: $band.enabled)
                     .toggleStyle(.switch).controlSize(.mini).font(.caption)
                     .accessibilityLabel("Band \(band.id + 1) enabled")
@@ -294,6 +324,19 @@ private struct BandEditor: View {
             }
             .disabled(!band.enabled)
             .opacity(band.enabled ? 1 : 0.5)
+
+            if band.dynamic {
+                HStack(alignment: .top, spacing: 18) {
+                    Control(title: "Threshold", unit: "dB", value: $band.thresholdDB, range: Band.thresholdRange, digits: 1)
+                        .frame(width: 150)
+                    Text("The gain only applies while this band is louder than the threshold, fully at \(Int(Band.dynamicSpanDB)) dB over. The dashed orange line shows it live.")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .disabled(!band.enabled)
+                .opacity(band.enabled ? 1 : 0.5)
+            }
 
             Divider()
 

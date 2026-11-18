@@ -38,6 +38,7 @@ final class AppModel: ObservableObject {
     private let engine = AudioEngine()
 
     var analyzer: SpectrumAnalyzer { engine.analyzer }
+    func liveGains() -> [Double]? { engine.liveGains() }
 
     var profiles: DeviceProfiles {
         get { library[deviceUID] ?? DeviceProfiles() }

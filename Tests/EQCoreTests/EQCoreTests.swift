@@ -175,3 +175,56 @@ struct SpectrumTests {
         #expect(a.levels().allSatisfy { $0 == SpectrumAnalyzer.floorDB })
     }
 }
+
+struct DynamicTests {
+    /// Steady-state gain in dB of a 1 kHz sine of `amplitude` through `settings`, plus band 5's live gain.
+    func run(_ settings: EQSettings, amplitude: Float) -> (gainDB: Double, live: Double) {
+        let p = EQProcessor(sampleRate: 48_000, settings: settings)
+        let n = 48_000
+        let sine = (0..<n).map { amplitude * Float(sin(2 * Double.pi * 1000 * Double($0) / 48_000)) }
+        var l = sine, r = sine
+        p.process(left: &l, right: &r, frames: n)
+        func rms(_ x: ArraySlice<Float>) -> Double { sqrt(x.reduce(0) { $0 + Double($1 * $1) } / Double(x.count)) }
+        return (20 * log10(rms(l[(n / 2)...]) / rms(sine[(n / 2)...])), p.liveGains()[5])
+    }
+
+    var tamer: EQSettings {
+        var s = EQSettings()
+        s.bands[5] = Band(id: 5, freq: 1000, gainDB: -12, q: 1, dynamic: true, thresholdDB: -30)
+        return s
+    }
+
+    @Test func quietSignalPassesUntouched() {
+        let r = run(tamer, amplitude: 0.003)   // about -53 dB in the band, below -30
+        #expect(abs(r.gainDB) < 0.1)
+        #expect(abs(r.live) < 0.1)
+    }
+
+    @Test func loudSignalGetsTheFullCut() {
+        let r = run(tamer, amplitude: 0.5)     // about -9 dB in the band, 21 dB over
+        #expect(abs(r.gainDB + 12) < 0.3)
+        #expect(abs(r.live + 12) < 0.01)
+    }
+
+    @Test func halfwayAboveThresholdGivesHalfTheGain() {
+        var s = tamer
+        s.bands[5].thresholdDB = -14           // band level ≈ -9 dB: 5 dB over, half the 10 dB span
+        let r = run(s, amplitude: 0.5)
+        #expect(abs(r.live + 6) < 0.7)
+    }
+
+    @Test func staticBandIgnoresLevel() {
+        var s = tamer
+        s.bands[5].dynamic = false
+        #expect(abs(run(s, amplitude: 0.003).gainDB + 12) < 0.1)
+    }
+
+    @Test func profilesSavedBeforeDynamicStillLoad() throws {
+        let old = #"{"id":2,"freq":125,"gainDB":3.5,"q":0.7,"enabled":true}"#
+        let band = try JSONDecoder().decode(Band.self, from: Data(old.utf8))
+        #expect(band == Band(id: 2, freq: 125, gainDB: 3.5, q: 0.7))
+        #expect(!band.dynamic)
+        let s = EQSettings()
+        #expect(try JSONDecoder().decode(EQSettings.self, from: JSONEncoder().encode(s)) == s)
+    }
+}
