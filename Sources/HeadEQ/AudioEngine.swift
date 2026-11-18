@@ -134,6 +134,11 @@ final class AudioEngine {
             analyzer.push(left: left, right: right, frames: frames)
         }
 
+        // A mono device gets both sides mixed, not just the left.
+        if outputs.reduce(0, { $0 + Int($1.mNumberChannels) }) == 1 {
+            for i in 0..<frames { left[i] = (left[i] + right[i]) * 0.5 }
+        }
+
         var channel = 0 // device-wide channel index: 0 = L, 1 = R, rest silent
         for buffer in outputs {
             let channels = Int(max(buffer.mNumberChannels, 1))

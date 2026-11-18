@@ -12,6 +12,17 @@ struct EQView: View {
             ResponseGraph(eq: $model.eq, selected: $selected, analyzer: model.analyzer, liveGains: { model.liveGains() })
                 .frame(height: 210)
                 .opacity(model.enabled ? 1 : 0.5)
+                .overlay(alignment: .top) {
+                    // Live views need the EQ running, since that is what captures the audio.
+                    if !model.enabled {
+                        Text("Turn on to see live audio")
+                            .font(.caption).foregroundStyle(.secondary)
+                            .padding(.horizontal, 8).padding(.vertical, 3)
+                            .background(.regularMaterial, in: Capsule())
+                            .padding(.top, 8)
+                            .allowsHitTesting(false)
+                    }
+                }
 
             BandPicker(eq: $model.eq, selected: $selected)
 
@@ -169,10 +180,24 @@ private struct ResponseGraph: View {
     // Mapping between pixels and frequency (log, 20 Hz – 20 kHz) / gain.
     private func x(_ f: Double, _ s: CGSize) -> CGFloat { s.width * log10(f / 20) / 3 }
     private func y(_ db: Double, _ s: CGSize) -> CGFloat { s.height / 2 * (1 - db / range) }
-    private func point(_ b: Band, _ s: CGSize) -> CGPoint { CGPoint(x: x(b.freq, s), y: y(eq.magnitudeDB(at: b.freq) - eq.preampDB, s)) }
+    /// Where each band's point sits on the curve.
+    private func points(_ s: CGSize) -> [CGPoint] {
+        zip(eq.bands, eq.magnitudesDB(at: eq.bands.map(\.freq))).map { CGPoint(x: x($0.freq, s), y: y($1 - eq.preampDB, s)) }
+    }
+
+    /// Response of `settings` (bands only, preamp shown separately), clipped to the visible range.
+    private func curve(_ settings: EQSettings, steps: Int, _ s: CGSize) -> Path {
+        let freqs = (0...steps).map { 20 * pow(1000, Double($0) / Double(steps)) }
+        var path = Path()
+        for (i, (f, db)) in zip(freqs, settings.magnitudesDB(at: freqs)).enumerated() {
+            let p = CGPoint(x: x(f, s), y: y(max(-range, min(range, db - settings.preampDB)), s))
+            i == 0 ? path.move(to: p) : path.addLine(to: p)
+        }
+        return path
+    }
 
     private func nearestBand(to p: CGPoint, in s: CGSize) -> Int? {
-        let hits = eq.bands.indices.map { ($0, hypot(point(eq.bands[$0], s).x - p.x, point(eq.bands[$0], s).y - p.y)) }
+        let hits = points(s).enumerated().map { ($0.offset, hypot($0.element.x - p.x, $0.element.y - p.y)) }
         guard let best = hits.min(by: { $0.1 < $1.1 }), best.1 < 22 else { return nil }
         return best.0
     }
@@ -191,13 +216,7 @@ private struct ResponseGraph: View {
         guard let gains, gains.count == eq.bands.count else { return }
         var now = eq
         for i in now.bands.indices { now.bands[i].gainDB = gains[i] }
-        var curve = Path()
-        for i in 0...120 {
-            let f = 20 * pow(1000, Double(i) / 120)
-            let p = CGPoint(x: x(f, s), y: y(max(-range, min(range, now.magnitudeDB(at: f) - now.preampDB)), s))
-            i == 0 ? curve.move(to: p) : curve.addLine(to: p)
-        }
-        ctx.stroke(curve, with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [4, 3]))
+        ctx.stroke(curve(now, steps: 120, s), with: .color(.orange), style: StrokeStyle(lineWidth: 1.5, lineJoin: .round, dash: [4, 3]))
     }
 
     private func draw(_ ctx: inout GraphicsContext, _ s: CGSize) {
@@ -222,24 +241,17 @@ private struct ResponseGraph: View {
                      at: CGPoint(x: 6, y: y(db, s)), anchor: .leading)
         }
 
-        // Curve (bands only; preamp shown separately) with a soft fill to 0 dB
-        var curve = Path()
-        for i in 0...240 {
-            let f = 20 * pow(1000, Double(i) / 240)
-            let db = max(-range, min(range, eq.magnitudeDB(at: f) - eq.preampDB))
-            let p = CGPoint(x: x(f, s), y: y(db, s))
-            i == 0 ? curve.move(to: p) : curve.addLine(to: p)
-        }
-        var fill = curve
+        // Curve with a soft fill to 0 dB
+        let line = curve(eq, steps: 240, s)
+        var fill = line
         fill.addLine(to: CGPoint(x: s.width, y: y(0, s)))
         fill.addLine(to: CGPoint(x: 0, y: y(0, s)))
         fill.closeSubpath()
         ctx.fill(fill, with: .color(.accentColor.opacity(0.14)))
-        ctx.stroke(curve, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
+        ctx.stroke(line, with: .color(.accentColor), style: StrokeStyle(lineWidth: 2, lineJoin: .round))
 
         // Nodes
-        for (i, band) in eq.bands.enumerated() {
-            let p = point(band, s)
+        for ((i, band), p) in zip(eq.bands.enumerated(), points(s)) {
             let isSel = i == selected
             let r: CGFloat = isSel ? 10 : 8
             let rect = CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r)
@@ -353,7 +365,7 @@ private struct BandEditor: View {
 
     /// Positive peak of the whole curve; above 0 dB music can clip.
     @ViewBuilder private var clipHint: some View {
-        let peak = (0...120).map { eq.magnitudeDB(at: 20 * pow(1000, Double($0) / 120)) }.max() ?? 0
+        let peak = eq.magnitudesDB(at: (0...120).map { 20 * pow(1000, Double($0) / 120) }).max() ?? 0
         VStack(alignment: .leading, spacing: 3) {
             Text("Peak").font(.caption).foregroundStyle(.secondary)
             if peak > 0.1 {

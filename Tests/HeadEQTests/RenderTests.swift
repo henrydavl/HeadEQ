@@ -7,7 +7,7 @@ import Testing
 struct RenderTests {
     let frames = 8
     let left: [Float] = (1...8).map { Float($0) / 10 }
-    let right: [Float] = (1...8).map { -Float($0) / 10 }
+    let right: [Float] = (1...8).map { Float($0) / 40 }
 
     /// Buffer list whose buffers hold `channels[i]` interleaved channels, filled from `fill` (or zeros).
     func bufferList(_ channels: [Int], fill: [[Float]]? = nil) -> UnsafeMutableAudioBufferListPointer {
@@ -47,6 +47,12 @@ struct RenderTests {
         render(into: out)
         #expect(samples(out, buffer: 0) == left)
         #expect(samples(out, buffer: 1) == right)
+    }
+
+    @Test func monoOutputGetsBothSides() {
+        let out = bufferList([1])
+        render(into: out)
+        #expect(samples(out, buffer: 0) == zip(left, right).map { ($0 + $1) * 0.5 })
     }
 
     @Test func extraChannelsAreSilent() {

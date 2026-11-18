@@ -85,6 +85,12 @@ public struct EQSettings: Codable, Equatable, Sendable {
 
     /// Combined response of all bands plus preamp, in dB.
     public func magnitudeDB(at freq: Double, sampleRate: Double = 48_000) -> Double {
-        bands.reduce(preampDB) { $0 + $1.biquad(sampleRate: sampleRate).magnitudeDB(at: freq, sampleRate: sampleRate) }
+        magnitudesDB(at: [freq], sampleRate: sampleRate)[0]
+    }
+
+    /// Combined response at many frequencies; builds each band's filter once.
+    public func magnitudesDB(at freqs: [Double], sampleRate: Double = 48_000) -> [Double] {
+        let filters = bands.map { $0.biquad(sampleRate: sampleRate) }
+        return freqs.map { f in filters.reduce(preampDB) { $0 + $1.magnitudeDB(at: f, sampleRate: sampleRate) } }
     }
 }
