@@ -37,6 +37,8 @@ final class AppModel: ObservableObject {
     private var deviceID = AudioObjectID(kAudioObjectUnknown)
     private let engine = AudioEngine()
 
+    var analyzer: SpectrumAnalyzer { engine.analyzer }
+
     var profiles: DeviceProfiles {
         get { library[deviceUID] ?? DeviceProfiles() }
         set { library[deviceUID] = newValue }

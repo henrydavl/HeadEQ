@@ -8,5 +8,6 @@ let package = Package(
         .target(name: "EQCore", path: "Sources/EQCore"),
         .executableTarget(name: "HeadEQ", dependencies: ["EQCore"], path: "Sources/HeadEQ"),
         .testTarget(name: "EQCoreTests", dependencies: ["EQCore"], path: "Tests/EQCoreTests"),
+        .testTarget(name: "HeadEQTests", dependencies: ["HeadEQ"], path: "Tests/HeadEQTests"),
     ]
 )

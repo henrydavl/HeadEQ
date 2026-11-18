@@ -6,6 +6,8 @@ import Foundation
 /// on the given output device. Main thread only, except the render block.
 final class AudioEngine {
     var onStatus: ((String) -> Void)?
+    /// Spectrum of the EQ'd output, for the live display.
+    let analyzer = SpectrumAnalyzer()
 
     private var settings = EQSettings()
     private var processor: EQProcessor?
@@ -62,12 +64,14 @@ final class AudioEngine {
             let rate = try CA.get(aggregateID, kAudioDevicePropertyNominalSampleRate, initial: Float64(0))
             let processor = EQProcessor(sampleRate: rate, settings: settings)
             self.processor = processor
+            analyzer.sampleRate = rate
 
             // Aggregate inputs are the output device's own input streams (e.g. a headset mic), then the tap.
             let tapStream = CA.streamCount(outputID, scope: kAudioObjectPropertyScopeInput)
-            let (left, right) = (left, right)
+            let (left, right, analyzer) = (left, right, analyzer)
             try check(AudioDeviceCreateIOProcIDWithBlock(&procID, aggregateID, nil) { _, input, _, output, _ in
-                Self.render(input: input, output: output, tapStream: tapStream, left: left, right: right, processor: processor)
+                Self.render(input: input, output: output, tapStream: tapStream, left: left, right: right,
+                              processor: processor, analyzer: analyzer)
             }, "Create IO proc")
             try CA.useInputStreams(of: aggregateID, proc: procID!, from: tapStream)
             try check(AudioDeviceStart(aggregateID, procID), "Start audio")
@@ -96,6 +100,7 @@ final class AudioEngine {
         }
         rateListener = nil
         processor = nil
+        analyzer.reset()
     }
 
     private func watchSampleRate(of device: AudioObjectID) {
@@ -108,9 +113,9 @@ final class AudioEngine {
     }
 
     /// Audio thread. Tap (stereo, interleaved or not) -> L/R scratch -> EQ -> every output stream.
-    private static func render(input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>,
+    static func render(input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>,
                                tapStream: Int, left: UnsafeMutablePointer<Float>, right: UnsafeMutablePointer<Float>,
-                               processor: EQProcessor) {
+                               processor: EQProcessor, analyzer: SpectrumAnalyzer) {
         let inputs = UnsafeMutableAudioBufferListPointer(UnsafeMutablePointer(mutating: input))
         let outputs = UnsafeMutableAudioBufferListPointer(output)
 
@@ -123,6 +128,7 @@ final class AudioEngine {
                 right[i] = channels > 1 ? data[i * channels + 1] : data[i * channels]
             }
             processor.process(left: left, right: right, frames: frames)
+            analyzer.push(left: left, right: right, frames: frames)
         }
 
         var channel = 0 // device-wide channel index: 0 = L, 1 = R, rest silent

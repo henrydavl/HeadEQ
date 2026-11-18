@@ -10,6 +10,22 @@ struct BiquadTests {
         #expect(abs(bq.magnitudeDB(at: freq / 50, sampleRate: 48_000)) < 0.5)
     }
 
+    /// Graph 300 × 200 pt, 3 decades wide (100 pt per decade), ±18 dB tall (200 pt = 36 dB).
+    @Test func dragMovesByOffset() {
+        let band = Band(id: 0, freq: 1234, gainDB: 2.3)
+        func drag(_ dx: Double, _ dy: Double, _ b: Band = band) -> Band {
+            b.dragged(dx: dx, dy: dy, width: 300, height: 200, dbRange: 18)
+        }
+        #expect(drag(0, 0) == band)                          // a click changes nothing
+        #expect(abs(drag(0, -50).gainDB - (2.3 + 9)) < 1e-9) // up raises gain
+        #expect(abs(drag(0, 50).gainDB - (2.3 - 9)) < 1e-9)  // down lowers it
+        #expect(drag(100, 0, Band(id: 0, freq: 100)).freq == 1000) // right one decade = ×10
+        #expect(drag(-100, 0, Band(id: 0, freq: 1000)).freq == 100)
+        #expect(drag(1000, -1000) .freq == Band.freqRange.upperBound)
+        #expect(drag(1000, -1000).gainDB == Band.gainRange.upperBound)
+        #expect(drag(-1000, 1000).freq == Band.freqRange.lowerBound)
+    }
+
     @Test func flatSettingsAreUnity() {
         let s = EQSettings()
         for f in [20.0, 440, 5000, 19000] { #expect(abs(s.magnitudeDB(at: f)) < 1e-9) }
@@ -114,5 +130,39 @@ struct ProfileTests {
         #expect(!d.isValid)
         let back = try JSONDecoder().decode(DeviceProfiles.self, from: JSONEncoder().encode(DeviceProfiles()))
         #expect(back.isValid)
+    }
+}
+
+struct SpectrumTests {
+    func feed(_ a: SpectrumAnalyzer, freq: Double, amplitude: Float = 1) {
+        let n = SpectrumAnalyzer.size
+        let s = (0..<n).map { amplitude * Float(sin(2 * Double.pi * freq * Double($0) / a.sampleRate)) }
+        a.push(left: s, right: s, frames: n)
+    }
+
+    /// Index of the bar (of 48, log 20 Hz–20 kHz) that contains `freq`.
+    func bar(_ freq: Double) -> Int { Int(48 * log10(freq / 20) / 3) }
+
+    @Test func fullScaleSineReadsZeroDBInItsBar() {
+        let a = SpectrumAnalyzer()
+        feed(a, freq: 1000)
+        let l = a.levels()
+        #expect(abs(l[bar(1000)]) < 2)          // full-scale sine ≈ 0 dBFS
+        #expect(l[bar(100)] < -60)              // far away stays low
+        #expect(l[bar(10_000)] < -60)
+    }
+
+    @Test func quieterSineReadsLower() {
+        let a = SpectrumAnalyzer()
+        feed(a, freq: 200, amplitude: 0.1)      // -20 dBFS
+        #expect(abs(a.levels()[bar(200)] + 20) < 2)
+    }
+
+    @Test func resetDropsToFloor() {
+        let a = SpectrumAnalyzer()
+        feed(a, freq: 1000)
+        _ = a.levels()
+        a.reset()
+        #expect(a.levels().allSatisfy { $0 == SpectrumAnalyzer.floorDB })
     }
 }

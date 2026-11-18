@@ -9,7 +9,7 @@ struct EQView: View {
         VStack(spacing: 14) {
             Header(model: model)
 
-            ResponseGraph(eq: $model.eq, selected: $selected)
+            ResponseGraph(eq: $model.eq, selected: $selected, analyzer: model.analyzer)
                 .frame(height: 210)
                 .opacity(model.enabled ? 1 : 0.5)
 
@@ -113,7 +113,9 @@ private struct Header: View {
 private struct ResponseGraph: View {
     @Binding var eq: EQSettings
     @Binding var selected: Int
-    @State private var dragging: Int?
+    let analyzer: SpectrumAnalyzer
+    /// The dragged band as it was when the drag began.
+    @State private var dragging: Band?
     @State private var dragActive = false
 
     private let range = 18.0 // ±dB visible
@@ -121,20 +123,28 @@ private struct ResponseGraph: View {
     var body: some View {
         GeometryReader { geo in
             let size = geo.size
-            Canvas { ctx, size in draw(&ctx, size) }
+            ZStack {
+                // Live spectrum of what is playing; only redraws while the panel is open.
+                TimelineView(.animation(minimumInterval: 1.0 / 30)) { _ in
+                    let levels = analyzer.levels()
+                    Canvas { ctx, size in drawSpectrum(levels, &ctx, size) }
+                }
+                Canvas { ctx, size in draw(&ctx, size) }
+            }
                 .contentShape(Rectangle())
                 .gesture(
                     DragGesture(minimumDistance: 0)
                         .onChanged { drag in
                             if !dragActive {
                                 dragActive = true
-                                dragging = nearestBand(to: drag.startLocation, in: size)
-                                if let dragging { selected = dragging }
+                                if let i = nearestBand(to: drag.startLocation, in: size) {
+                                    dragging = eq.bands[i]
+                                    selected = i
+                                }
                             }
-                            guard let i = dragging else { return }
-                            let f = freq(atX: drag.location.x, size)
-                            eq.bands[i].freq = min(max(f < 1000 ? f.rounded() : (f / 10).rounded() * 10, Band.freqRange.lowerBound), Band.freqRange.upperBound)
-                            eq.bands[i].gainDB = min(max((gain(atY: drag.location.y, size) * 10).rounded() / 10, Band.gainRange.lowerBound), Band.gainRange.upperBound)
+                            guard let start = dragging else { return }
+                            eq.bands[start.id] = start.dragged(dx: drag.translation.width, dy: drag.translation.height,
+                                                               width: size.width, height: size.height, dbRange: range)
                         }
                         .onEnded { _ in dragActive = false; dragging = nil }
                 )
@@ -150,14 +160,22 @@ private struct ResponseGraph: View {
     // Mapping between pixels and frequency (log, 20 Hz – 20 kHz) / gain.
     private func x(_ f: Double, _ s: CGSize) -> CGFloat { s.width * log10(f / 20) / 3 }
     private func y(_ db: Double, _ s: CGSize) -> CGFloat { s.height / 2 * (1 - db / range) }
-    private func freq(atX x: CGFloat, _ s: CGSize) -> Double { 20 * pow(10, 3 * Double(x / s.width)) }
-    private func gain(atY y: CGFloat, _ s: CGSize) -> Double { range * (1 - 2 * Double(y / s.height)) }
     private func point(_ b: Band, _ s: CGSize) -> CGPoint { CGPoint(x: x(b.freq, s), y: y(eq.magnitudeDB(at: b.freq) - eq.preampDB, s)) }
 
     private func nearestBand(to p: CGPoint, in s: CGSize) -> Int? {
         let hits = eq.bands.indices.map { ($0, hypot(point(eq.bands[$0], s).x - p.x, point(eq.bands[$0], s).y - p.y)) }
         guard let best = hits.min(by: { $0.1 < $1.1 }), best.1 < 22 else { return nil }
         return best.0
+    }
+
+    private func drawSpectrum(_ levels: [Float], _ ctx: inout GraphicsContext, _ s: CGSize) {
+        let floor = Double(SpectrumAnalyzer.floorDB)
+        let w = s.width / CGFloat(levels.count)
+        for (i, db) in levels.enumerated() where Double(db) > floor {
+            let h = s.height * CGFloat((Double(db) - floor) / -floor)
+            let bar = CGRect(x: CGFloat(i) * w + 1, y: s.height - h, width: max(w - 2, 1), height: h)
+            ctx.fill(Path(roundedRect: bar, cornerRadius: 1.5), with: .color(.primary.opacity(0.09)))
+        }
     }
 
     private func draw(_ ctx: inout GraphicsContext, _ s: CGSize) {

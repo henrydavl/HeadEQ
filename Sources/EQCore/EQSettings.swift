@@ -24,6 +24,19 @@ public struct Band: Codable, Equatable, Identifiable, Sendable {
         guard enabled, gainDB != 0 else { return .identity }
         return .peaking(freq: freq, gainDB: gainDB, q: q, sampleRate: sampleRate)
     }
+
+    /// This band moved by a pointer drag of (dx, dy) on a graph `width` wide spanning 20 Hz–20 kHz
+    /// (3 decades, log) and `height` tall spanning ±`dbRange` dB. Screen y grows downward, so up raises gain.
+    /// Moves by offset, so a click without movement changes nothing.
+    public func dragged(dx: Double, dy: Double, width: Double, height: Double, dbRange: Double) -> Band {
+        guard dx != 0 || dy != 0 else { return self }
+        var band = self
+        let f = freq * pow(10, 3 * dx / width)
+        let g = gainDB - 2 * dbRange * dy / height
+        band.freq = min(max(f < 1000 ? f.rounded() : (f / 10).rounded() * 10, Self.freqRange.lowerBound), Self.freqRange.upperBound)
+        band.gainDB = min(max((g * 10).rounded() / 10, Self.gainRange.lowerBound), Self.gainRange.upperBound)
+        return band
+    }
 }
 
 public struct EQSettings: Codable, Equatable, Sendable {
